@@ -1,0 +1,24 @@
+# -------------------------------------------------------------------
+# Bharat Payroll Reconciliation - Specific Gitignore
+# -------------------------------------------------------------------
+
+# 1. Virtual Environment (Local dependencies)
+venv/
+
+# 2. Python Cache
+__pycache__/
+*.pyc
+
+# 3. Operational Data (Contains PII like Phones, Names, UTRs)
+# Ignoring the specific CSVs we've been working with to prevent data leaks
+data/bank_transfers.csv
+data/supervisor_logs.csv
+data/wage_rates*
+data/workers*
+data/*.csv
+
+# 4. OS / System Files
+.DS_Store
+
+# 5. Environment Variables (for future backend integration)
+.env
