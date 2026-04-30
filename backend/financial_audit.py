@@ -20,6 +20,9 @@ def main():
     mapping = match_workers(cleaned['supervisor_logs'], cleaned['workers'])
     logs_final = calculate_expected_pay(cleaned['supervisor_logs'], mapping, cleaned['workers'], cleaned['wage_rates'])
     
+    # Save shift-level expected pay for the dashboard
+    logs_final.to_csv(os.path.join(data_dir, 'shift_level_expected_pay.csv'), index=False)
+    
     transfers = prepare_bank_transfers(cleaned['bank_transfers'])
     bank_mapped = map_transfers_to_workers(transfers, cleaned['workers'])
     

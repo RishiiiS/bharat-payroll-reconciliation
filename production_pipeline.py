@@ -216,7 +216,7 @@ def calculate_expected_pay(logs_df: pd.DataFrame, mapping_df: pd.DataFrame, work
     
     # 5. Final Output Format
     final_cols = [
-        'log_id', 'worker_id', 'hours_worked', 'hourly_rate', 
+        'log_id', 'worker_id', 'work_date', 'hours_worked', 'hourly_rate', 
         'expected_pay', 'confidence_score', 'needs_manual_review', 
         'review_reason', 'rate_source_row_id'
     ]
