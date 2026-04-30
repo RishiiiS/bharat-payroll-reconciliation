@@ -17,32 +17,6 @@ const Sidebar = () => {
               <LayoutDashboard size={18} />
               <span>Overview</span>
             </a>
-            <a href="#" className="flex items-center gap-3 px-3 py-2.5 text-slate-600 hover:bg-slate-50 rounded-lg font-medium transition-colors">
-              <FileText size={18} />
-              <span>Reconcile</span>
-            </a>
-            <a href="#" className="flex items-center gap-3 px-3 py-2.5 text-slate-600 hover:bg-slate-50 rounded-lg font-medium transition-colors">
-              <BarChart2 size={18} />
-              <span>Reports</span>
-            </a>
-          </nav>
-        </div>
-        
-        <div>
-          <h2 className="px-6 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Admin Portal</h2>
-          <nav className="flex flex-col gap-1 px-3">
-            <a href="#" className="flex items-center gap-3 px-3 py-2.5 text-slate-600 hover:bg-slate-50 rounded-lg font-medium transition-colors">
-              <Calendar size={18} />
-              <span>Payroll Cycles</span>
-            </a>
-            <a href="#" className="flex items-center gap-3 px-3 py-2.5 text-slate-600 hover:bg-slate-50 rounded-lg font-medium transition-colors">
-              <Users size={18} />
-              <span>Employee Directory</span>
-            </a>
-            <a href="#" className="flex items-center gap-3 px-3 py-2.5 text-slate-600 hover:bg-slate-50 rounded-lg font-medium transition-colors">
-              <ShieldAlert size={18} />
-              <span>Audit Logs</span>
-            </a>
           </nav>
         </div>
       </div>

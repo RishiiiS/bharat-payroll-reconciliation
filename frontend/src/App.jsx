@@ -5,6 +5,10 @@ import Sidebar from './components/Sidebar';
 import SummaryCards from './components/SummaryCards';
 import FilterRow from './components/FilterRow';
 import ReconciliationTable from './components/ReconciliationTable';
+import DetailedInsights from './components/DetailedInsights';
+
+import shiftDataRaw from '../../data/shift_level_expected_pay.csv?raw';
+import bankDataRaw from '../../data/bank_transfers.csv?raw';
 
 function App() {
   const [data, setData] = useState([]);
@@ -66,6 +70,21 @@ function App() {
       return Math.abs(b.difference) - Math.abs(a.difference);
     });
   }, [data, searchTerm, statusFilter, showOnlyIssues]);
+
+  const insightStats = useMemo(() => {
+    // Dynamic computation from raw datasets
+    const totalShifts = shiftDataRaw ? shiftDataRaw.trim().split('\n').length - 1 : 0;
+    const totalPayments = bankDataRaw ? bankDataRaw.trim().split('\n').length - 1 : 0;
+    
+    const missingShifts = Math.max(0, totalShifts - totalPayments);
+    const percentMissing = totalShifts > 0 ? ((missingShifts / totalShifts) * 100).toFixed(1) : 0;
+    
+    return {
+      missing: missingShifts,
+      total: totalShifts,
+      percent: percentMissing
+    };
+  }, []);
 
   const handleExportCSV = () => {
     if (data.length === 0) return;
@@ -130,7 +149,6 @@ function App() {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 max-w-7xl mx-auto">
             <div>
               <h1 className="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">Payroll Reconciliation Dashboard</h1>
-              <p className="text-slate-500 mt-1">Reviewing cycle for Period Oct 01 - Oct 15, 2023</p>
             </div>
             
             <div className="flex gap-3 w-full md:w-auto mt-4 md:mt-0">
@@ -148,13 +166,16 @@ function App() {
         {/* Content Section */}
         <div className="p-6 md:p-10 max-w-7xl mx-auto w-full flex-1">
           {/* Insight Banner */}
-          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-            <AlertCircle className="text-blue-500 shrink-0 mt-0.5" size={20} />
-            <p className="text-blue-800 text-sm">
-              <span className="font-semibold">Insight:</span> ~12% of shifts are not converted into payments, causing most discrepancies.
-            </p>
-          </div>
+          {insightStats.total > 0 && (
+            <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
+              <AlertCircle className="text-blue-500 shrink-0 mt-0.5" size={20} />
+              <p className="text-blue-800 text-sm">
+                <span className="font-semibold">Insight:</span> <span className="font-bold">{insightStats.missing.toLocaleString()}</span> out of <span className="font-bold">{insightStats.total.toLocaleString()}</span> shifts (~<span className="font-bold">{insightStats.percent}%</span>) are missing corresponding payments, driving most discrepancies.
+              </p>
+            </div>
+          )}
           <SummaryCards data={data} />
+          <DetailedInsights data={data} shiftDataRaw={shiftDataRaw} bankDataRaw={bankDataRaw} />
           
           <FilterRow 
             searchTerm={searchTerm} 

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { ChevronDown, ChevronUp, AlertTriangle, AlertCircle, Loader2 } from 'lucide-react';
 
-const ShiftDetails = ({ workerId, missingCount = 0 }) => {
+const ShiftDetails = ({ workerId, missingCount = 0, difference = 0 }) => {
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -67,6 +67,13 @@ const ShiftDetails = ({ workerId, missingCount = 0 }) => {
   const missingShiftIds = new Set(missingShifts.map(s => s.log_id || s.work_date));
 
   const totalUnpaid = missingShifts.reduce((sum, s) => sum + (Number(s.expected_pay) || 0), 0);
+  
+  const TOLERANCE = 100;
+  const absDifference = Math.abs(difference);
+  const isRoundingDiff = difference !== 0 && absDifference < TOLERANCE;
+  const isUnderpaid = difference > 0 && !isRoundingDiff;
+  const isOverpaid = difference < 0 && !isRoundingDiff;
+  const excessAmount = absDifference;
 
   return (
     <div className="mt-4 border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
@@ -119,9 +126,12 @@ const ShiftDetails = ({ workerId, missingCount = 0 }) => {
         </table>
       </div>
 
-      {/* MISSING SHIFTS SECTION */}
-      {missingShifts.length > 0 && (
+      {/* MISSING SHIFTS SECTION - ONLY FOR UNDERPAID */}
+      {isUnderpaid && missingShifts.length > 0 && (
         <div className="border-t border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm text-slate-500 mb-4 italic border-l-2 border-slate-300 pl-3">
+            These shifts have expected earnings but no corresponding bank transfer record.
+          </p>
           <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
             MISSING SHIFTS (UNPAID)
           </h4>
@@ -134,7 +144,7 @@ const ShiftDetails = ({ workerId, missingCount = 0 }) => {
                 <tr>
                   <th className="px-4 py-2 font-semibold">Date</th>
                   <th className="px-4 py-2 font-semibold text-right border-l border-slate-100">Expected Pay</th>
-                  <th className="px-4 py-2 font-semibold text-right border-l border-slate-100">Actual Payment</th>
+                  <th className="px-4 py-2 font-semibold text-right border-l border-slate-100">Payment Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -146,10 +156,10 @@ const ShiftDetails = ({ workerId, missingCount = 0 }) => {
                     </td>
                     <td className="px-4 py-2 text-right border-l border-slate-100">
                       <span 
-                        className="text-red-500 italic text-xs font-medium cursor-help bg-red-50 px-2 py-0.5 rounded"
+                        className="text-slate-500 italic text-xs font-medium cursor-help bg-slate-100 px-2 py-0.5 rounded border border-slate-200"
                         title="No matching bank transfer found for this shift"
                       >
-                        Not Found
+                        No Matching Payment
                       </span>
                     </td>
                   </tr>
@@ -157,6 +167,36 @@ const ShiftDetails = ({ workerId, missingCount = 0 }) => {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* OVERPAID SECTION - ONLY FOR OVERPAID */}
+      {isOverpaid && (
+        <div className="border-t border-slate-200 bg-amber-50 p-4">
+          <h4 className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-3">
+            UNMAPPED PAYMENTS (EXCESS)
+          </h4>
+          <div className="mb-2 text-sm text-amber-900 font-medium">
+            Excess Amount: <span className="font-bold text-amber-700 text-lg ml-1">₹{excessAmount.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}</span>
+          </div>
+          <p className="text-sm text-amber-700 italic opacity-80 mt-2">
+            These payments could not be mapped to any recorded shifts.
+          </p>
+        </div>
+      )}
+
+      {/* ROUNDING DIFFERENCE SECTION - ONLY FOR SMALL DIFFERENCES */}
+      {isRoundingDiff && (
+        <div className="border-t border-slate-200 bg-slate-50 p-4">
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+            ROUNDING DIFFERENCE
+          </h4>
+          <div className="mb-2 text-sm text-slate-700 font-medium">
+            Difference: <span className="font-bold text-slate-800 text-lg ml-1">₹{excessAmount.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}</span>
+          </div>
+          <p className="text-sm text-slate-500 italic mt-2 border-l-2 border-slate-300 pl-3">
+            This difference is within tolerance and likely caused by rounding or precision mismatches.
+          </p>
         </div>
       )}
     </div>
@@ -179,9 +219,10 @@ const ReconciliationTable = ({ data }) => {
   const formatCurrency = (val) => `₹${Number(val).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}`;
 
   const getStatus = (diff) => {
+    const TOLERANCE = 100;
+    if (Math.abs(diff) < TOLERANCE) return { label: 'MATCHED', color: 'text-emerald-700 bg-emerald-100', rowBg: 'bg-emerald-50 hover:bg-emerald-100/80' };
     if (diff > 0) return { label: 'UNDERPAID', color: 'text-red-700 bg-red-100', rowBg: 'bg-red-50 hover:bg-red-100/80' };
-    if (diff < 0) return { label: 'OVERPAID', color: 'text-amber-700 bg-amber-100', rowBg: 'bg-amber-50 hover:bg-amber-100/80' };
-    return { label: 'MATCHED', color: 'text-emerald-700 bg-emerald-100', rowBg: 'bg-emerald-50 hover:bg-emerald-100/80' };
+    return { label: 'OVERPAID', color: 'text-amber-700 bg-amber-100', rowBg: 'bg-amber-50 hover:bg-amber-100/80' };
   };
 
   if (data.length === 0) {
@@ -275,7 +316,7 @@ const ReconciliationTable = ({ data }) => {
                           </div>
                           
                           {/* Shift Level Breakdown Details */}
-                          <ShiftDetails workerId={row.worker_id} missingCount={row.missing_shifts || 0} />
+                          <ShiftDetails workerId={row.worker_id} missingCount={row.missing_shifts || 0} difference={row.difference} />
                         </div>
                       </td>
                     </tr>

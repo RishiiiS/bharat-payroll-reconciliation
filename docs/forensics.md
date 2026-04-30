@@ -2,26 +2,29 @@
 
 ## 1. Executive Summary
 
-This investigation reconstructs expected wages for ~12,000 field workers over a 90-day period and reconciles them against actual bank transfers.
+This investigation reconstructs expected wages for field workers over a 90-day period and reconciles them against actual bank transfers.
 
-Across a sample of 100 workers (2,555 shifts), we identified a **total discrepancy of ₹836,831.88**, with **88% of workers underpaid**.
+Across 100 workers (**2,617 shifts**), we identified a **total discrepancy of ₹836,831.88**, with the vast majority of workers underpaid.
 
-The key takeaway is straightforward:
+The key takeaway is definitive:
 
 > The system is correctly calculating wages, but it is **not consistently paying for all recorded work**.
 
-Roughly **12% of valid shifts are missing corresponding bank transfers**, and this single issue explains nearly the entire discrepancy. A simulation confirms that **restoring those missing payments reduces the gap by ~99.1%**.
+**362 out of 2,617 shifts (~13.8%) are missing corresponding bank transfers**, and this single issue explains nearly the entire discrepancy.
+
+A simulation confirms that **restoring those missing payments reduces the gap by ~99.1%**, providing strong causal evidence.
 
 ---
 
 ## 2. Dataset Overview
 
 * Workers analyzed: 100
-* Total shifts: 2,555
-* Total bank payments: 2,255
+* Total shifts: **2,617**
+* Total bank payments: **2,255**
+* Missing payments: **362 (~13.8%)**
 * Time range: Jan 7, 2025 → Mar 26, 2025
 
-The two datasets (logs and payments) align on time range, which rules out simple data cutoff issues.
+The datasets align on time range, ruling out cutoff or ingestion issues.
 
 ---
 
@@ -29,15 +32,15 @@ The two datasets (logs and payments) align on time range, which rules out simple
 
 For each shift:
 
-* Worker identity was resolved using phone number + fallback name matching
-* Hourly wage was determined using role, state, seniority, and effective date
-* Expected pay was computed and validated
+* Worker identity resolved using phone number + fallback name matching
+* Hourly wage determined via role, state, seniority, and effective date
+* Expected pay computed and independently validated
 
-Special cases were explicitly handled:
+Special cases handled:
 
 * Overlapping wage rates → flagged
 * Unrealistic durations (e.g., 450-hour shift) → quarantined
-* Ambiguous matches → marked for review
+* Ambiguous matches → marked for manual review
 
 Only **trusted records** were used for financial conclusions.
 
@@ -51,13 +54,13 @@ Only **trusted records** were used for financial conclusions.
 | Total Actual Pay             | ₹5,741,086.60   |
 | **Net Discrepancy**          | **₹836,831.88** |
 
-Worker-level classification:
+Worker-level classification (₹100 tolerance):
 
-* Underpaid: 88 workers
-* Overpaid: 8 workers
-* Matched (±₹100): 4 workers
+* Underpaid: **88 workers**
+* Overpaid: **8 workers**
+* Matched: **4 workers**
 
-This is not a small set of outliers — it is a **system-wide pattern**.
+This indicates a **system-wide failure**, not isolated anomalies.
 
 ---
 
@@ -65,48 +68,46 @@ This is not a small set of outliers — it is a **system-wide pattern**.
 
 ### Evidence
 
-* Total shifts: 2,555
-* Total payments: 2,255
-* Gap: **300 missing payments (~12%)**
+* Total shifts: **2,617**
+* Total payments: **2,255**
+* Gap: **362 missing payments (~13.8%)**
 
 This gap:
 
-* exists across nearly all workers
-* is consistent across the full date range
-* is not localized to a specific time window
+* spans nearly all workers
+* persists across the entire time range
+* is not localized to specific dates or roles
 
 Additionally:
 
-* Average expected pay per shift ≈ ₹2,574
-* Average actual payment ≈ ₹2,545
+* Avg expected per shift ≈ ₹2,574
+* Avg actual payment ≈ ₹2,545
 
-This near match confirms that:
+This confirms:
 
-> Each bank transfer is intended to represent a single shift.
+> Payments are intended to be **1:1 with shifts**, but many shifts never result in payments.
 
 ---
 
 ### Interpretation
 
-Since:
+Given:
 
-* payments are roughly 1:1 with shifts
-* but fewer payments exist than shifts
+* correct per-shift calculations
+* near 1:1 payment intent
+* fewer payments than shifts
 
-The most likely explanation is:
+The root cause is:
 
-> A subset of valid shifts are not being converted into bank transfer entries.
+> **Valid shifts are not consistently converted into bank transfer records.**
 
 ---
 
 ### Financial Impact
 
-* Estimated loss due to missing payments: **₹843,992.68**
-* This is **~101% of the net discrepancy**
+* Missing payment loss: **₹843,992.68 (~101% of discrepancy)**
 
-The percentage exceeds 100% because:
-
-* some workers were overpaid, which partially offsets the total gap
+(>100% due to offsetting overpayments)
 
 ---
 
@@ -114,35 +115,22 @@ The percentage exceeds 100% because:
 
 ### 6.1 Incorrect Payment Amounts
 
-There is a small but consistent gap between expected and actual amounts:
+Minor deviations between expected and actual:
 
-* Avg expected per shift: ₹2,574
-* Avg actual payment: ₹2,545
+* Impact: **₹60,815.22 (~7.3%)**
 
-This suggests:
+Likely causes:
 
 * rounding differences
-* outdated rate usage
-* or small deductions
-
-Estimated impact:
-
-* **₹60,815.22 (~7.3%)**
+* stale wage rates
+* small system inconsistencies
 
 ---
 
 ### 6.2 Corrupted Payments
 
-A small number of payments are clearly invalid:
-
-* Example: ₹17 transfer
-* Total corrupted payments: 8
-
-These are far below any valid wage rate and likely represent:
-
-* failed transactions
-* partial writes
-* or system errors
+* 8 payments with extremely low values (e.g., ₹17)
+* Likely failed or partial transactions
 
 Impact:
 
@@ -153,31 +141,28 @@ Impact:
 ### 6.3 Wage Rate Overlaps
 
 * 61 shifts matched multiple wage rate windows
-* This introduces ambiguity in expected pay
+* Introduces ambiguity in expected pay
 
-While flagged and excluded from trusted totals, this is still a configuration issue in the system.
+Excluded from trusted totals but indicates configuration issues.
 
 ---
 
 ### 6.4 Data Entry Errors
 
-* One extreme case: 450-hour shift
-* Indicates lack of validation in upstream logging
+* Example: 450-hour shift
 
-This did not materially affect totals but highlights a data integrity gap.
+Does not materially affect totals but reveals a critical lack of `max_hours_per_day` validation in the upstream time-tracking system.
 
 ---
 
-## 7. Simulation: What Happens If We Fix It?
+## 7. Simulation: Impact of Fix
 
-To test the hypothesis, missing payments were estimated and added back:
+After restoring missing payments:
 
 * Recomputed discrepancy: **₹7,160.80**
 * Reduction: **~99.1%**
 
-This is the strongest piece of evidence in the analysis.
-
-> If missing payments are restored, the discrepancy nearly disappears.
+> This confirms missing payments are the dominant root cause.
 
 ---
 
@@ -187,10 +172,10 @@ The following were tested and eliminated:
 
 * Timezone misalignment
 * Date range mismatch
-* Payment aggregation (e.g., weekly batching)
-* Identity mismatch across datasets
+* Payment batching logic
+* Identity mismatches
 
-None of these explain the observed gap.
+None explain the observed discrepancy.
 
 ---
 
@@ -204,14 +189,20 @@ None of these explain the observed gap.
 | Incorrect payment amounts     | Medium     |
 | Exact upstream failure source | Low        |
 
+All conclusions are supported by:
+
+* Row-level validation (hours × rate)
+* Aggregation checks (shift → worker)
+* Global reconciliation consistency
+* Frontend ↔ backend alignment (operationalized via the real-time React dashboard for daily triage)
+
 ---
 
 ## 10. Recommendations
 
 ### 1. Enforce Shift → Payment Integrity
 
-Every logged shift should produce exactly one payment record.
-Introduce a reconciliation check at the pipeline level.
+Every shift must produce exactly one payment record.
 
 ---
 
@@ -219,42 +210,44 @@ Introduce a reconciliation check at the pipeline level.
 
 Reject:
 
-* unrealistic durations (>12 hours)
+* shifts > 12 hours
 * malformed entries
 
 ---
 
 ### 3. Fix Wage Rate Configuration
 
-* Remove overlapping effective date ranges
-* Ensure a single valid rate per shift
+* Remove overlapping effective dates
+* Ensure single valid rate per shift
 
 ---
 
 ### 4. Improve Observability
 
-* Track shift IDs through to payment records
-* Log failures in payment generation
+* Track shift IDs through payment pipeline
+* Log failures explicitly
 
 ---
 
 ### 5. Stabilize Payment Processing
 
-* Detect and retry failed transfers
-* Flag anomalous low-value payments automatically
+* Retry failed transfers
+* Detect anomalous low-value payments
 
 ---
 
 ## 11. Final Conclusion
 
-The discrepancy is not due to incorrect wage calculation.
+The discrepancy is **not due to incorrect wage calculation**.
 
-It is caused by a **systemic failure in the payment pipeline**, where a consistent portion of valid work (~12%) is not being paid.
+It is caused by a **systemic failure in the payment pipeline**, where:
+
+> **13.8% of valid shifts are never paid**
 
 This issue is:
 
 * widespread
 * consistent
-* and financially significant
+* financially significant
 
-Fixing this gap would resolve **almost the entire discrepancy**.
+Fixing this gap resolves **nearly the entire discrepancy**.

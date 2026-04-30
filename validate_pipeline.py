@@ -1,151 +1,184 @@
 import pandas as pd
 import numpy as np
+import os
 
-from analyze_data import load_data
-from clean_data import clean_pipeline
-from match_workers import match_logs_to_workers
+def validate():
+    print("="*50)
+    print("🚀 STARTING COMPREHENSIVE PIPELINE VALIDATION")
+    print("="*50)
 
-def calculate_expected_pay(logs_df: pd.DataFrame, mapping_df: pd.DataFrame, workers_df: pd.DataFrame, wage_rates_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Calculates expected pay for each log entry.
-    Merges logs with matched workers and applies the correct wage rate.
-    """
-    # 1. Merge logs with their mapped worker info
-    df = logs_df.merge(mapping_df, on='log_id', how='left')
+    # Load data
+    data_dir = 'data'
+    results_csv = os.path.join(data_dir, 'financial_audit_results.csv')
+    shifts_csv = os.path.join(data_dir, 'shift_level_expected_pay.csv')
+    bank_csv = os.path.join(data_dir, 'bank_transfers.csv')
+
+    if not all(os.path.exists(f) for f in [results_csv, shifts_csv, bank_csv]):
+        print("Missing required CSV files.")
+        return
+
+    df_results = pd.read_csv(results_csv)
+    df_shifts = pd.read_csv(shifts_csv)
+    df_bank = pd.read_csv(bank_csv)
     
-    # 2. Merge with workers to get role, state, seniority
-    df = df.merge(workers_df[['worker_id', 'role', 'state', 'seniority']], on='worker_id', how='left')
+    # Store maximum difference observed across all validations
+    max_diff_observed = 0.0
+
+    print("\n" + "="*50)
+    print("PART 1: ROW-LEVEL VALIDATION")
+    print("="*50)
     
-    # Initialize calculation columns
-    df['hourly_rate'] = 0.0
-    df['expected_pay'] = 0.0
-    df['wage_rate_matches'] = 0
+    print("\n1. RANDOM SAMPLE CHECK")
+    sample_shifts = df_shifts.dropna(subset=['worker_id', 'hours_worked', 'hourly_rate', 'expected_pay']).sample(min(5, len(df_shifts)), random_state=42)
+    sample_pass = True
+    for _, row in sample_shifts.iterrows():
+        calc = row['hours_worked'] * row['hourly_rate']
+        diff = abs(calc - row['expected_pay'])
+        max_diff_observed = max(max_diff_observed, diff)
+        match = diff < 0.01
+        if not match: sample_pass = False
+        print(f"Worker: {row['worker_id']}, Hours: {row['hours_worked']}, Rate: {row['hourly_rate']}, Stored Expected: {row['expected_pay']:.2f}, Recomputed: {calc:.2f}")
     
-    # 3. Match wage rates
-    def get_wage_rate(row):
-        # If no worker matched, we can't calculate pay
-        if pd.isna(row['worker_id']) or pd.isna(row['role']):
-            return 0.0, 0
-            
-        work_date = row['work_date']
+    print(f"-> DIFFERENCE < 0.01: {'PASS' if sample_pass else 'FAIL'}")
+
+    print("\n2. INVALID DATA CHECK")
+    missing_worker_ids = df_shifts['worker_id'].isna().sum()
+    missing_hours = df_shifts['hours_worked'].isna().sum()
+    negative_values = ((df_shifts['hours_worked'] < 0) | (df_shifts['expected_pay'] < 0) | (df_shifts['hourly_rate'] < 0)).sum()
+    hours_gt_12 = (df_shifts['hours_worked'] > 12).sum()
+
+    print(f"Missing worker_id: {missing_worker_ids}")
+    print(f"Missing hours_worked: {missing_hours}")
+    print(f"Negative values: {negative_values}")
+    print(f"Hours_worked > 12: {hours_gt_12}")
+
+    print("\n" + "="*50)
+    print("PART 2: SHIFT -> WORKER CONSISTENCY")
+    print("="*50)
+    
+    # In the pipeline, trusted expected pay ONLY sums shifts that do not need manual review
+    is_unflagged = df_shifts['needs_manual_review'].isin([False, 'False', 0, '0', '']) | df_shifts['needs_manual_review'].isna()
+    valid_shifts = df_shifts[is_unflagged]
+    
+    shift_sums = valid_shifts.groupby('worker_id')['expected_pay'].sum()
+    
+    consistency_pass = True
+    for _, worker in df_results.iterrows():
+        wid = worker['worker_id']
+        trusted_exp = worker['trusted_expected_pay']
+        sum_shifts = shift_sums.get(wid, 0.0)
         
-        # Filter wage rates for matching role, state, seniority, and active date range
-        mask = (
-            (wage_rates_df['role'] == row['role']) &
-            (wage_rates_df['state'] == row['state']) &
-            (wage_rates_df['seniority'] == row['seniority']) &
-            (wage_rates_df['effective_from'] <= work_date) &
-            (wage_rates_df['effective_to'] >= work_date)
-        )
-        matches = wage_rates_df[mask]
+        diff = abs(sum_shifts - trusted_exp)
+        max_diff_observed = max(max_diff_observed, diff)
         
-        if len(matches) == 1:
-            return matches.iloc[0]['hourly_rate_inr'], 1
-        elif len(matches) > 1:
-            return 0.0, len(matches) # Multiple overlapping rates
+        if diff >= 0.01:
+            consistency_pass = False
+            print(f"MISMATCH -> Worker {wid}: Shift Sum = {sum_shifts:.2f}, Trusted = {trusted_exp:.2f}, Diff = {diff:.2f}")
+
+    print(f"-> SHIFT CONSISTENCY < 0.01 FOR ALL WORKERS: {'PASS' if consistency_pass else 'FAIL'}")
+
+    print("\n" + "="*50)
+    print("PART 3: GLOBAL CONSISTENCY")
+    print("="*50)
+    
+    total_expected_pay = df_results['trusted_expected_pay'].sum()
+    total_actual_pay = df_results['total_actual_pay'].sum()
+    global_difference_computed = total_actual_pay - total_expected_pay
+    reported_discrepancy = df_results['difference'].sum() 
+    
+    print(f"Total Expected Pay: {total_expected_pay:.2f}")
+    print(f"Total Actual Pay: {total_actual_pay:.2f}")
+    print(f"Global Difference (actual - expected): {global_difference_computed:.2f}")
+    
+    global_match = abs(abs(global_difference_computed) - abs(reported_discrepancy)) < 0.01
+    max_diff_observed = max(max_diff_observed, abs(abs(global_difference_computed) - abs(reported_discrepancy)))
+    print(f"-> MATCHES REPORTED DISCREPANCY: {'PASS' if global_match else 'FAIL'}")
+
+    print("\n" + "="*50)
+    print("PART 4: COUNT VALIDATION")
+    print("="*50)
+    
+    total_shifts_file = len(df_shifts)
+    total_payments_file = len(df_bank)
+    
+    print(f"total_shifts: {total_shifts_file}")
+    print(f"total_payments: {total_payments_file}")
+    print(f"difference: {total_shifts_file - total_payments_file}")
+
+    print("\n" + "="*50)
+    print("PART 5: FRONTEND MAPPING VALIDATION (CRITICAL)")
+    print("="*50)
+    
+    # 1. Reconciliation Fields (Note: 'name' and 'status' are applied dynamically in API/UI)
+    expected_result_cols = ['worker_id', 'trusted_expected_pay', 'total_actual_pay', 'difference', 'review_reason', 'num_shifts', 'num_payments']
+    missing_result_cols = [c for c in expected_result_cols if c not in df_results.columns]
+    
+    print("Reconciliation Fields Check:")
+    print(f"Missing columns (Base CSV): {missing_result_cols if missing_result_cols else 'None'}")
+    
+    # Check for nulls in critical columns
+    nulls_in_critical = df_results[['worker_id', 'trusted_expected_pay', 'total_actual_pay', 'difference']].isna().sum().sum()
+    print(f"Null values in critical columns: {nulls_in_critical}")
+    
+    # 2. Shift-Level Fields
+    expected_shift_cols = ['worker_id', 'work_date', 'hours_worked', 'hourly_rate', 'expected_pay', 'review_reason']
+    missing_shift_cols = [c for c in expected_shift_cols if c not in df_shifts.columns]
+    
+    print("\nShift-Level Fields Check:")
+    print(f"Missing columns: {missing_shift_cols if missing_shift_cols else 'None'}")
+    
+    # 3. Cross-Check UI Consistency
+    print("\nCROSS-CHECK UI CONSISTENCY (2 WORKERS):")
+    ui_sample_workers = df_results.sample(min(2, len(df_results)), random_state=42)
+    ui_pass = True
+    for _, worker in ui_sample_workers.iterrows():
+        wid = worker['worker_id']
+        trusted_exp = worker['trusted_expected_pay']
+        sum_shifts = shift_sums.get(wid, 0.0)
+        
+        diff = abs(sum_shifts - trusted_exp)
+        max_diff_observed = max(max_diff_observed, diff)
+        
+        # UI Logic Check (difference = trusted - actual)
+        ui_difference = worker['difference'] 
+        if ui_difference > 0:
+            ui_status = "UNDERPAID"
+        elif ui_difference < 0:
+            ui_status = "OVERPAID"
         else:
-            return 0.0, 0 # No rates found
+            ui_status = "MATCHED"
             
-    # Apply logic
-    res = df.apply(get_wage_rate, axis=1)
-    df['hourly_rate'] = [r[0] for r in res]
-    df['wage_rate_matches'] = [r[1] for r in res]
-    
-    # 4. Calculate final expected pay
-    df['expected_pay'] = df['hours'] * df['hourly_rate']
-    
-    # 5. Update manual review flags based on wage rate anomalies
-    multiple_mask = df['wage_rate_matches'] > 1
-    df.loc[multiple_mask, 'needs_manual_review'] = True
-    df.loc[multiple_mask, 'review_reason'] = df.loc[multiple_mask, 'review_reason'].apply(
-        lambda x: f"{x} | multiple matching wage rates" if pd.notna(x) and str(x).strip() else "multiple matching wage rates"
-    )
-    
-    no_match_mask = (df['wage_rate_matches'] == 0) & (df['worker_id'].notna())
-    df.loc[no_match_mask, 'needs_manual_review'] = True
-    df.loc[no_match_mask, 'review_reason'] = df.loc[no_match_mask, 'review_reason'].apply(
-        lambda x: f"{x} | no matching wage rate found" if pd.notna(x) and str(x).strip() else "no matching wage rate found"
-    )
-    
-    return df
-
-def validate_pipeline():
-    print("🚀 Starting Full Validation Pipeline...")
-    
-    # ---------------------------------------------------------
-    # Execution
-    # ---------------------------------------------------------
-    print("\n📦 Loading and Cleaning Data...")
-    raw_data = load_data('data')
-    cleaned_data = clean_pipeline(raw_data)
-    
-    logs = cleaned_data['supervisor_logs']
-    workers = cleaned_data['workers']
-    wage_rates = cleaned_data['wage_rates']
-    
-    print("\n🔗 Matching logs to workers...")
-    mapping_df = match_logs_to_workers(logs, workers)
-    
-    print("💰 Calculating Expected Pay...")
-    calculated_df = calculate_expected_pay(logs, mapping_df, workers, wage_rates)
-    
-    # ---------------------------------------------------------
-    # Validation & Printing (As Requested)
-    # ---------------------------------------------------------
-    total_logs = len(calculated_df)
-    high_conf = len(calculated_df[(calculated_df['confidence_score'] >= 0.95) & (~calculated_df['needs_manual_review'])])
-    flagged = calculated_df['needs_manual_review'].sum()
-    
-    print("\n" + "="*50)
-    print("📊 1. Pipeline Summary")
-    print("="*50)
-    print(f"Total logs processed: {total_logs}")
-    print(f"% of logs matched with high confidence (>= 0.95): {(high_conf / total_logs * 100):.2f}%")
-    print(f"% of logs flagged for manual review: {(flagged / total_logs * 100):.2f}%")
-    
-    print("\n" + "="*50)
-    print("✅ 2. Data Validations")
-    print("="*50)
-    
-    neg_hours = (calculated_df['hours'] < 0).sum()
-    print(f"[{'PASS' if neg_hours == 0 else 'FAIL'}] No negative hours worked (Found: {neg_hours})")
-    
-    neg_pay = (calculated_df['expected_pay'] < 0).sum()
-    print(f"[{'PASS' if neg_pay == 0 else 'FAIL'}] No negative expected_pay (Found: {neg_pay})")
-    
-    missing_id_but_not_flagged = calculated_df[calculated_df['worker_id'].isna() & (~calculated_df['needs_manual_review'])].shape[0]
-    print(f"[{'PASS' if missing_id_but_not_flagged == 0 else 'FAIL'}] All non-flagged logs have a worker_id (Missing: {missing_id_but_not_flagged})")
-    
-    print("\n" + "="*50)
-    print("⚠️ 3. Wage Rate Logic Checks")
-    print("="*50)
-    no_wage_match = (calculated_df['worker_id'].notna() & (calculated_df['wage_rate_matches'] == 0)).sum()
-    multiple_wage_match = (calculated_df['wage_rate_matches'] > 1).sum()
-    
-    print(f"Logs with NO matching wage rate: {no_wage_match}")
-    print(f"Logs with MULTIPLE matching wage rates: {multiple_wage_match}")
-    
-    print("\n" + "="*50)
-    print("💸 4. Expected Pay Distribution Summary")
-    print("="*50)
-    valid_pay = calculated_df[calculated_df['expected_pay'] > 0]['expected_pay']
-    if len(valid_pay) > 0:
-        print(f"Minimum Expected Pay: ₹{valid_pay.min():.2f}")
-        print(f"Maximum Expected Pay: ₹{valid_pay.max():.2f}")
-        print(f"Average Expected Pay: ₹{valid_pay.mean():.2f}")
-    else:
-        print("No valid expected pay calculated.")
+        print(f"Worker {wid} -> Trusted Expected: {trusted_exp:.2f} | Shift Sum: {sum_shifts:.2f}")
+        print(f"Worker {wid} -> Difference: {ui_difference:.2f} | UI Status: {ui_status}")
         
-    print("\n" + "="*50)
-    print("🎲 5. Random Sample Rows (5 rows)")
-    print("="*50)
-    display_cols = ['worker_id', 'hours', 'hourly_rate', 'expected_pay', 'needs_manual_review', 'review_reason']
-    
-    # Rename hours to hours_worked for display
-    sample_df = calculated_df[display_cols].rename(columns={'hours': 'hours_worked'})
-    sample_df = sample_df.sample(min(5, len(calculated_df)), random_state=42)
-    
-    print(sample_df.to_string(index=False))
+        if diff >= 0.01: ui_pass = False
 
-if __name__ == "__main__":
-    validate_pipeline()
+    print(f"-> UI WOULD DISPLAY SAME VALUES: {'PASS' if ui_pass else 'FAIL'}")
+
+    print("\n" + "="*50)
+    print("PART 6: FLOATING POINT TOLERANCE CHECK")
+    print("="*50)
+    
+    print(f"Max difference across all validations: {max_diff_observed:.4f}")
+    tol_pass = max_diff_observed < 0.01
+    print(f"-> ALL DIFFERENCES < 0.01: {'PASS' if tol_pass else 'FAIL'}")
+
+    print("\n" + "="*50)
+    print("PART 7: FINAL OUTPUT")
+    print("="*50)
+    
+    print(f"total workers: {len(df_results)}")
+    print(f"total shifts: {total_shifts_file}")
+    print(f"total payments: {total_payments_file}")
+    print(f"total expected pay: {total_expected_pay:.2f}")
+    print(f"total actual pay: {total_actual_pay:.2f}")
+    print(f"global discrepancy: {abs(reported_discrepancy):.2f}")
+    
+    pipeline_pass = sample_pass and consistency_pass and global_match and tol_pass
+    frontend_pass = (len(missing_result_cols) == 0) and (len(missing_shift_cols) == 0) and ui_pass and nulls_in_critical == 0
+    
+    print(f"\nPIPELINE VALIDATION: {'PASS' if pipeline_pass else 'FAIL'}")
+    print(f"FRONTEND MAPPING: {'PASS' if frontend_pass else 'FAIL'}")
+
+if __name__ == '__main__':
+    validate()
