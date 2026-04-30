@@ -14,7 +14,7 @@ function App() {
   // Filter States
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
-  const [showOnlyIssues, setShowOnlyIssues] = useState(false);
+  const [showOnlyIssues, setShowOnlyIssues] = useState(true); // Default to true
 
   useEffect(() => {
     const fetchData = async () => {
@@ -61,8 +61,33 @@ function App() {
       }
 
       return true;
+    }).sort((a, b) => {
+      // Sort by highest absolute discrepancy
+      return Math.abs(b.difference) - Math.abs(a.difference);
     });
   }, [data, searchTerm, statusFilter, showOnlyIssues]);
+
+  const handleExportCSV = () => {
+    if (data.length === 0) return;
+    const headers = ['worker_id', 'name', 'trusted_expected_pay', 'total_actual_pay', 'difference', 'classification', 'needs_manual_review', 'review_reason'];
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + headers.join(',') + "\n"
+      + data.map(row => {
+          return headers.map(header => {
+            const val = row[header] === null || row[header] === undefined ? "" : row[header];
+            // Escape quotes and wrap in quotes to handle commas
+            return `"${String(val).replace(/"/g, '""')}"`;
+          }).join(',');
+      }).join("\n");
+      
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "reconciliation_results.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   if (loading) {
     return (
@@ -109,9 +134,12 @@ function App() {
             </div>
             
             <div className="flex gap-3 w-full md:w-auto mt-4 md:mt-0">
-              <button className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-slate-300 text-slate-700 font-medium rounded-lg hover:bg-slate-50 transition-colors shadow-sm">
+              <button 
+                onClick={handleExportCSV}
+                className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-slate-300 text-slate-700 font-medium rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
+              >
                 <Download size={18} />
-                Export Report
+                Export CSV
               </button>
             </div>
           </div>
@@ -119,6 +147,13 @@ function App() {
 
         {/* Content Section */}
         <div className="p-6 md:p-10 max-w-7xl mx-auto w-full flex-1">
+          {/* Insight Banner */}
+          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
+            <AlertCircle className="text-blue-500 shrink-0 mt-0.5" size={20} />
+            <p className="text-blue-800 text-sm">
+              <span className="font-semibold">Insight:</span> ~12% of shifts are not converted into payments, causing most discrepancies.
+            </p>
+          </div>
           <SummaryCards data={data} />
           
           <FilterRow 

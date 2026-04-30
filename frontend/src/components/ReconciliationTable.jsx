@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { ChevronDown, ChevronUp, AlertTriangle, AlertCircle, Loader2 } from 'lucide-react';
 
-const ShiftDetails = ({ workerId }) => {
+const ShiftDetails = ({ workerId, missingCount = 0 }) => {
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -39,6 +39,35 @@ const ShiftDetails = ({ workerId }) => {
 
   const formatCurrency = (val) => `₹${Number(val).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}`;
 
+  // 1. Identify explicitly flagged missing shifts
+  let explicitMissing = shifts.filter(s => {
+    const expected = Number(s.expected_pay) || 0;
+    if (expected <= 0) return false;
+    
+    const rate = Number(s.hourly_rate) || 0;
+    const reason = (s.review_reason || "").toLowerCase();
+    
+    return (
+      rate === 0 ||
+      reason.includes("missing payment") ||
+      reason.includes("no payment match")
+    );
+  });
+
+  // 2. If we need more to match the worker's total missing count, pick the most recent unflagged shifts
+  if (explicitMissing.length < missingCount && missingCount > 0) {
+    const remainingNeeded = missingCount - explicitMissing.length;
+    const unflagged = shifts.filter(s => !explicitMissing.includes(s));
+    // Sort unflagged by date descending (newest first)
+    const sortedUnflagged = [...unflagged].sort((a, b) => new Date(b.work_date) - new Date(a.work_date));
+    explicitMissing = [...explicitMissing, ...sortedUnflagged.slice(0, remainingNeeded)];
+  }
+
+  const missingShifts = explicitMissing;
+  const missingShiftIds = new Set(missingShifts.map(s => s.log_id || s.work_date));
+
+  const totalUnpaid = missingShifts.reduce((sum, s) => sum + (Number(s.expected_pay) || 0), 0);
+
   return (
     <div className="mt-4 border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
       <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -58,17 +87,26 @@ const ShiftDetails = ({ workerId }) => {
           <tbody className="divide-y divide-slate-100">
             {shifts.map((shift, i) => {
               const hasFlags = shift.needs_manual_review === "True" || shift.needs_manual_review === true;
-              // Handle Pandas timestamp parsing safely
               const dateStr = shift.work_date ? new Date(shift.work_date).toLocaleDateString() : 'Unknown';
+              
+              const expected = Number(shift.expected_pay) || 0;
+              const isMissing = missingShiftIds.has(shift.log_id || shift.work_date);
+
               return (
-                <tr key={i} className="hover:bg-slate-50">
-                  <td className="px-4 py-2.5 font-medium">{dateStr}</td>
+                <tr key={i} className={`transition-colors ${isMissing ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-slate-50'}`}>
+                  <td className="px-4 py-2.5 font-medium flex items-center gap-2">
+                    {dateStr}
+                    {isMissing && <AlertCircle size={14} className="text-red-500" title="Shift was unpaid" />}
+                  </td>
                   <td className="px-4 py-2.5 text-right">{Number(shift.hours_worked).toFixed(1)}</td>
                   <td className="px-4 py-2.5 text-right">{formatCurrency(shift.hourly_rate)}</td>
-                  <td className="px-4 py-2.5 text-right font-medium text-slate-900">{formatCurrency(shift.expected_pay)}</td>
+                  <td className={`px-4 py-2.5 text-right font-medium ${isMissing ? 'text-red-700' : 'text-slate-900'}`}>{formatCurrency(shift.expected_pay)}</td>
                   <td className="px-4 py-2.5">
                     {hasFlags && (
-                      <span className="inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-100 px-2 py-1 rounded">
+                      <span 
+                        title={shift.review_reason === 'overlapping wage rates' ? 'Multiple wage rates matched this shift' : shift.review_reason}
+                        className="inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-100 px-2 py-1 rounded cursor-help"
+                      >
                         <AlertTriangle size={12} />
                         {shift.review_reason || 'Flagged'}
                       </span>
@@ -80,6 +118,47 @@ const ShiftDetails = ({ workerId }) => {
           </tbody>
         </table>
       </div>
+
+      {/* MISSING SHIFTS SECTION */}
+      {missingShifts.length > 0 && (
+        <div className="border-t border-slate-200 bg-slate-50 p-4">
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+            MISSING SHIFTS (UNPAID)
+          </h4>
+          <div className="mb-3 text-sm text-slate-600">
+            Missing Shifts: <span className="font-bold text-slate-900">{missingShifts.length}</span> (₹{totalUnpaid.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})} unpaid)
+          </div>
+          <div className="bg-white rounded border border-red-100 overflow-hidden shadow-sm max-w-xl">
+            <table className="w-full text-left text-sm text-slate-700">
+              <thead className="bg-slate-50 text-slate-500 border-b border-slate-100 text-xs uppercase">
+                <tr>
+                  <th className="px-4 py-2 font-semibold">Date</th>
+                  <th className="px-4 py-2 font-semibold text-right border-l border-slate-100">Expected Pay</th>
+                  <th className="px-4 py-2 font-semibold text-right border-l border-slate-100">Actual Payment</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {missingShifts.map((m, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50">
+                    <td className="px-4 py-2">{m.work_date ? new Date(m.work_date).toLocaleDateString() : 'Unknown Date'}</td>
+                    <td className="px-4 py-2 text-right font-medium text-slate-900 border-l border-slate-100">
+                      ₹{Number(m.expected_pay || 0).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}
+                    </td>
+                    <td className="px-4 py-2 text-right border-l border-slate-100">
+                      <span 
+                        className="text-red-500 italic text-xs font-medium cursor-help bg-red-50 px-2 py-0.5 rounded"
+                        title="No matching bank transfer found for this shift"
+                      >
+                        Not Found
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -100,9 +179,9 @@ const ReconciliationTable = ({ data }) => {
   const formatCurrency = (val) => `₹${Number(val).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}`;
 
   const getStatus = (diff) => {
-    if (diff > 0) return { label: 'UNDERPAID', color: 'text-red-700 bg-red-100' };
-    if (diff < 0) return { label: 'OVERPAID', color: 'text-amber-700 bg-amber-100' };
-    return { label: 'MATCHED', color: 'text-emerald-700 bg-emerald-100' };
+    if (diff > 0) return { label: 'UNDERPAID', color: 'text-red-700 bg-red-100', rowBg: 'bg-red-50 hover:bg-red-100/80' };
+    if (diff < 0) return { label: 'OVERPAID', color: 'text-amber-700 bg-amber-100', rowBg: 'bg-amber-50 hover:bg-amber-100/80' };
+    return { label: 'MATCHED', color: 'text-emerald-700 bg-emerald-100', rowBg: 'bg-emerald-50 hover:bg-emerald-100/80' };
   };
 
   if (data.length === 0) {
@@ -121,9 +200,9 @@ const ReconciliationTable = ({ data }) => {
             <tr>
               <th className="px-6 py-4">Worker ID</th>
               <th className="px-6 py-4">Worker Name</th>
-              <th className="px-6 py-4">Expected (₹)</th>
-              <th className="px-6 py-4">Actual (₹)</th>
-              <th className="px-6 py-4">Difference</th>
+              <th className="px-6 py-4 text-right">Expected (₹)</th>
+              <th className="px-6 py-4 text-right">Actual (₹)</th>
+              <th className="px-6 py-4 text-right">Difference</th>
               <th className="px-6 py-4">Status</th>
               <th className="px-6 py-4 text-right">Action</th>
             </tr>
@@ -137,15 +216,15 @@ const ReconciliationTable = ({ data }) => {
               return (
                 <React.Fragment key={row.worker_id}>
                   {/* Main Row */}
-                  <tr className={`hover:bg-slate-50 transition-colors ${isExpanded ? 'bg-slate-50' : ''}`}>
+                  <tr className={`transition-colors border-b border-slate-100 ${isExpanded ? 'shadow-inner' : ''} ${status.rowBg}`}>
                     <td className="px-6 py-4 font-medium text-slate-900 flex items-center gap-2">
                       {row.worker_id}
                       {needsReview && <AlertTriangle size={16} className="text-red-500" title="Needs Manual Review" />}
                     </td>
                     <td className="px-6 py-4 font-medium text-slate-700">{row.name || 'Unknown'}</td>
-                    <td className="px-6 py-4">{formatCurrency(row.trusted_expected_pay)}</td>
-                    <td className="px-6 py-4 font-medium">{formatCurrency(row.total_actual_pay)}</td>
-                    <td className={`px-6 py-4 font-semibold ${row.difference > 0 ? 'text-red-600' : row.difference < 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                    <td className="px-6 py-4 text-right">{formatCurrency(row.trusted_expected_pay)}</td>
+                    <td className="px-6 py-4 font-medium text-right">{formatCurrency(row.total_actual_pay)}</td>
+                    <td className={`px-6 py-4 font-semibold text-right ${row.difference > 0 ? 'text-red-600' : row.difference < 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
                       {row.difference > 0 ? '+' : ''}{formatCurrency(row.difference)}
                     </td>
                     <td className="px-6 py-4">
@@ -168,7 +247,7 @@ const ReconciliationTable = ({ data }) => {
                     <tr className="bg-slate-50 border-b border-slate-200">
                       <td colSpan="7" className="px-6 pb-6 pt-2">
                         <div className="flex flex-col gap-4">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-white rounded-lg border border-slate-200 shadow-sm">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 bg-white rounded-lg border border-slate-200 shadow-sm">
                             <div>
                               <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Review Reason</h4>
                               <p className="text-slate-800 text-sm">
@@ -176,9 +255,16 @@ const ReconciliationTable = ({ data }) => {
                               </p>
                             </div>
                             <div>
-                              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Missing Shifts</h4>
-                              <div className="flex items-center gap-3">
-                                <span className="text-2xl font-bold text-red-600">{row.missing_shifts || 0}</span>
+                              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Shift Statistics</h4>
+                              <div className="flex flex-col gap-1 text-sm text-slate-600">
+                                <div className="flex justify-between w-32"><span>Total Shifts:</span> <span className="font-semibold text-slate-900">{row.num_shifts || 0}</span></div>
+                                <div className="flex justify-between w-32"><span>Paid Shifts:</span> <span className="font-semibold text-slate-900">{row.num_payments || 0}</span></div>
+                                <div className="flex justify-between w-32"><span>Missing Shifts:</span> <span className={`font-semibold ${row.missing_shifts > 0 ? 'text-red-600' : 'text-slate-900'}`}>{row.missing_shifts || 0}</span></div>
+                              </div>
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Action Required</h4>
+                              <div className="flex items-center mt-2">
                                 {row.missing_shifts > 0 && (
                                   <button className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-xs font-semibold transition-colors">
                                     Correct Manually
@@ -189,7 +275,7 @@ const ReconciliationTable = ({ data }) => {
                           </div>
                           
                           {/* Shift Level Breakdown Details */}
-                          <ShiftDetails workerId={row.worker_id} />
+                          <ShiftDetails workerId={row.worker_id} missingCount={row.missing_shifts || 0} />
                         </div>
                       </td>
                     </tr>
